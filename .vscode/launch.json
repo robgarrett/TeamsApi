@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug TeamsApi.Console",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/TeamsApi.Console/bin/Debug/net10.0/TeamsApi.Console.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/TeamsApi.Console",
+      "stopAtEntry": false,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Run TeamsApi.Tests",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "test",
+      "program": "dotnet",
+      "args": [
+        "test",
+        "${workspaceFolder}/TeamsApi.Tests/TeamsApi.Tests.csproj",
+        "--no-build"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "integratedTerminal"
+    }
+  ]
+}

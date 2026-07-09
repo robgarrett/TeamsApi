@@ -1,0 +1,11 @@
+
+const session = app.sessions.find(s => s.name === "Transcribe Meetings");
+
+if (!session) {
+    console.dialog('Session "Transcribe Meetings" not found.');
+} else {
+    if (session.running) {
+        session.stop();
+        //console.dialog("Stopped Transcribe Meetings");
+    }
+}
