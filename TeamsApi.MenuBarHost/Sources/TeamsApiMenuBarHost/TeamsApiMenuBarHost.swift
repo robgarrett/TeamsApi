@@ -374,10 +374,9 @@ private struct HostLaunchTarget {
 
 private enum HostLocator {
     static func resolveLaunchTarget() -> HostLaunchTarget? {
-        if let bundledExecutable = Bundle.module.url(
+        if let bundledExecutable = bundledResourceURL(
             forResource: "TeamsApi.Host",
-            withExtension: nil,
-            subdirectory: "TeamsApiHostRuntime"
+            withExtension: nil
         ),
            FileManager.default.isExecutableFile(atPath: bundledExecutable.path) {
             return HostLaunchTarget(
@@ -387,7 +386,7 @@ private enum HostLocator {
             )
         }
 
-        if let bundledDll = Bundle.main.resourceURL?.appendingPathComponent("TeamsApi.Host.dll"),
+        if let bundledDll = bundledResourceURL(forResource: "TeamsApi.Host", withExtension: "dll"),
            FileManager.default.fileExists(atPath: bundledDll.path) {
             return HostLaunchTarget(
                 executableURL: URL(fileURLWithPath: "/usr/bin/env"),
@@ -396,47 +395,40 @@ private enum HostLocator {
             )
         }
 
-        let startDirectories = [
-            URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
-            Bundle.main.bundleURL.deletingLastPathComponent()
-        ]
+        return nil
+    }
 
-        for startDirectory in startDirectories {
-            if let repoRoot = findRepoRoot(startingAt: startDirectory) {
-                let hostRuntime = repoRoot
-                    .appendingPathComponent("TeamsApi.Host")
-                    .appendingPathComponent("bin")
-                    .appendingPathComponent("Debug")
-                    .appendingPathComponent("net10.0")
-                    .appendingPathComponent("TeamsApi.Host.dll")
+    private static func bundledResourceURL(forResource resource: String, withExtension fileExtension: String?) -> URL? {
+        let candidateBundles = [
+            Bundle.module.resourceURL,
+            Bundle.main.resourceURL
+        ].compactMap { $0 }
 
-                if FileManager.default.fileExists(atPath: hostRuntime.path) {
-                    return HostLaunchTarget(
-                        executableURL: URL(fileURLWithPath: "/usr/bin/env"),
-                        arguments: ["dotnet", hostRuntime.path],
-                        currentDirectoryURL: hostRuntime.deletingLastPathComponent()
-                    )
-                }
+        for bundleURL in candidateBundles {
+            let directURL = bundleURL.appendingPathComponent(resource).appendingPathExtensionIfNeeded(fileExtension)
+            if FileManager.default.fileExists(atPath: directURL.path) {
+                return directURL
+            }
+
+            let runtimeURL = bundleURL
+                .appendingPathComponent("TeamsApiHostRuntime")
+                .appendingPathComponent(resource)
+                .appendingPathExtensionIfNeeded(fileExtension)
+            if FileManager.default.fileExists(atPath: runtimeURL.path) {
+                return runtimeURL
             }
         }
 
         return nil
     }
+}
 
-    private static func findRepoRoot(startingAt url: URL) -> URL? {
-        var current = url
-
-        while true {
-            if FileManager.default.fileExists(atPath: current.appendingPathComponent("TeamsApi.sln").path) {
-                return current
-            }
-
-            let parent = current.deletingLastPathComponent()
-            if parent.path == current.path {
-                return nil
-            }
-
-            current = parent
+private extension URL {
+    func appendingPathExtensionIfNeeded(_ fileExtension: String?) -> URL {
+        guard let fileExtension, !fileExtension.isEmpty else {
+            return self
         }
+
+        return appendingPathExtension(fileExtension)
     }
 }
