@@ -18,20 +18,24 @@ final class TeamsApiMenuBarHostApp: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
     private let settingsWindowController = SettingsWindowController()
-    private var hostStatusText = "Stopped"
+    private var launcherStatusText = "Stopped"
+    private var sessionStatusText = "Disabled"
+    private var audioHijackAppStatusText = "Not running"
     private var meetingStatusText = "Out of meeting"
+    private var audioHijackStatusTimer: Timer?
 
     override init() {
         super.init()
         launcher.onStatusChanged = { [weak self] statusText in
             DispatchQueue.main.async {
-                self?.hostStatusText = statusText
+                self?.launcherStatusText = statusText
                 self?.refreshStatusText()
             }
         }
         launcher.onMeetingStateChanged = { [weak self] isInMeeting in
             DispatchQueue.main.async {
                 self?.meetingStatusText = isInMeeting ? "In meeting" : "Out of meeting"
+                self?.sessionStatusText = isInMeeting ? "Enabled" : "Disabled"
                 self?.updateStatusItem(isInMeeting: isInMeeting)
                 self?.refreshStatusText()
             }
@@ -59,12 +63,15 @@ final class TeamsApiMenuBarHostApp: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         NSLog("TeamsApi menu bar host launched.")
         configureStatusItem()
+        startAudioHijackStatusTimer()
         refreshStatusText()
         updateStatusItem(isInMeeting: false)
         launcher.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        audioHijackStatusTimer?.invalidate()
+        audioHijackStatusTimer = nil
         launcher.stop()
     }
 
@@ -90,8 +97,14 @@ final class TeamsApiMenuBarHostApp: NSObject, NSApplicationDelegate {
     }
 
     private func refreshStatusText() {
-        statusMenuItem?.title = "Status: \(hostStatusText) | Meeting: \(meetingStatusText)"
-        settingsWindowController.updateStatus(hostStatus: hostStatusText, meetingStatus: meetingStatusText)
+        refreshAudioHijackAppStatus()
+        statusMenuItem?.title = "Status: \(sessionStatusText) | Audio Hijack: \(audioHijackAppStatusText)"
+        settingsWindowController.updateStatus(
+            launcherStatus: launcherStatusText,
+            sessionStatus: sessionStatusText,
+            audioHijackAppStatus: audioHijackAppStatusText,
+            meetingStatus: meetingStatusText
+        )
     }
 
     private func updateStatusItem(isInMeeting: Bool) {
@@ -105,8 +118,26 @@ final class TeamsApiMenuBarHostApp: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         settingsWindowController.apply(settings: CommandScriptSettings.current())
-        settingsWindowController.updateStatus(hostStatus: hostStatusText, meetingStatus: meetingStatusText)
+        refreshStatusText()
         settingsWindowController.showAndActivate()
+    }
+
+    private func startAudioHijackStatusTimer() {
+        audioHijackStatusTimer?.invalidate()
+        audioHijackStatusTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.refreshStatusText()
+            }
+        }
+    }
+
+    private func refreshAudioHijackAppStatus() {
+        let bundleIdentifier = CommandScriptSettings.current().bundleIdentifier
+        let isRunning = NSWorkspace.shared.runningApplications.contains { runningApp in
+            runningApp.bundleIdentifier == bundleIdentifier
+        }
+
+        audioHijackAppStatusText = isRunning ? "Running" : "Not running"
     }
 
     private func makeStatusImage(isInMeeting: Bool) -> NSImage {

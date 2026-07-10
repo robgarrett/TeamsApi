@@ -6,17 +6,25 @@ final class SettingsWindowController: NSWindowController {
     var onSave: ((CommandScriptSettings) -> Void)?
     var onResetToDefaults: (() -> Void)?
 
-    private let hostStatusValue = NSTextField(labelWithString: "Stopped")
+    private let launcherStatusLed = StatusLedView()
+    private let launcherStatusValue = NSTextField(labelWithString: "Stopped")
+    private let sessionStatusLed = StatusLedView()
+    private let sessionStatusValue = NSTextField(labelWithString: "Disabled")
+    private let audioHijackAppStatusLed = StatusLedView()
+    private let audioHijackAppStatusValue = NSTextField(labelWithString: "Not running")
+    private let meetingStatusLed = StatusLedView()
     private let meetingStatusValue = NSTextField(labelWithString: "Out of meeting")
     private let enablePathField = NSTextField(string: "")
     private let disablePathField = NSTextField(string: "")
 
-    private var currentHostStatus = "Stopped"
+    private var currentLauncherStatus = "Stopped"
+    private var currentSessionStatus = "Disabled"
+    private var currentAudioHijackAppStatus = "Not running"
     private var currentMeetingStatus = "Out of meeting"
 
     override init(window: NSWindow? = nil) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 280),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 324),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -27,7 +35,12 @@ final class SettingsWindowController: NSWindowController {
         window.center()
         window.isReleasedWhenClosed = false
         window.contentView = buildContentView()
-        updateStatus(hostStatus: currentHostStatus, meetingStatus: currentMeetingStatus)
+        updateStatus(
+            launcherStatus: currentLauncherStatus,
+            sessionStatus: currentSessionStatus,
+            audioHijackAppStatus: currentAudioHijackAppStatus,
+            meetingStatus: currentMeetingStatus
+        )
         apply(settings: CommandScriptSettings.current())
     }
 
@@ -40,11 +53,19 @@ final class SettingsWindowController: NSWindowController {
         disablePathField.stringValue = settings.disableTranscribeScriptPath
     }
 
-    func updateStatus(hostStatus: String, meetingStatus: String) {
-        currentHostStatus = hostStatus
+    func updateStatus(launcherStatus: String, sessionStatus: String, audioHijackAppStatus: String, meetingStatus: String) {
+        currentLauncherStatus = launcherStatus
+        currentSessionStatus = sessionStatus
+        currentAudioHijackAppStatus = audioHijackAppStatus
         currentMeetingStatus = meetingStatus
-        hostStatusValue.stringValue = hostStatus
+        launcherStatusValue.stringValue = launcherStatus
+        launcherStatusLed.isHealthy = launcherStatus == "Running"
+        sessionStatusValue.stringValue = sessionStatus
+        sessionStatusLed.isHealthy = sessionStatus == "Enabled"
+        audioHijackAppStatusValue.stringValue = audioHijackAppStatus
+        audioHijackAppStatusLed.isHealthy = audioHijackAppStatus == "Running"
         meetingStatusValue.stringValue = meetingStatus
+        meetingStatusLed.isHealthy = meetingStatus == "In meeting"
     }
 
     func showAndActivate() {
@@ -129,17 +150,33 @@ final class SettingsWindowController: NSWindowController {
         label.textColor = .secondaryLabelColor
 
         section.addArrangedSubview(label)
-        section.addArrangedSubview(makeStatusRow(title: "Host", valueField: hostStatusValue))
-        section.addArrangedSubview(makeStatusRow(title: "Meeting", valueField: meetingStatusValue))
+        section.addArrangedSubview(makeStatusRow(title: "Launcher", indicatorView: launcherStatusLed, valueField: launcherStatusValue, labelWidth: 132))
+        section.addArrangedSubview(makeStatusRow(title: "Session", indicatorView: sessionStatusLed, valueField: sessionStatusValue, labelWidth: 132))
+        section.addArrangedSubview(makeStatusRow(title: "Audio Hijack app", indicatorView: audioHijackAppStatusLed, valueField: audioHijackAppStatusValue, labelWidth: 132))
+        section.addArrangedSubview(makeStatusRow(title: "Meeting", indicatorView: meetingStatusLed, valueField: meetingStatusValue, labelWidth: 132))
         return section
     }
 
-    private func makeStatusRow(title: String, valueField: NSTextField) -> NSView {
-        return makeLabeledRow(
-            title: title,
-            trailingView: valueField,
-            width: 76
-        )
+    private func makeStatusRow(title: String, indicatorView: NSView, valueField: NSTextField, labelWidth: CGFloat) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.alignment = .right
+        label.textColor = .labelColor
+        label.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
+
+        indicatorView.translatesAutoresizingMaskIntoConstraints = false
+        indicatorView.widthAnchor.constraint(equalToConstant: 10).isActive = true
+        indicatorView.heightAnchor.constraint(equalToConstant: 10).isActive = true
+
+        row.addArrangedSubview(label)
+        row.addArrangedSubview(indicatorView)
+        row.addArrangedSubview(valueField)
+        return row
     }
 
     private func makeScriptRow(title: String, field: NSTextField, browseAction: Selector) -> NSView {
@@ -253,5 +290,37 @@ final class SettingsWindowController: NSWindowController {
         }
 
         return .package
+    }
+}
+
+private final class StatusLedView: NSView {
+    var isHealthy: Bool = false {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    override var isOpaque: Bool {
+        false
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 10, height: 10)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let circleRect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let fillColor = isHealthy ? NSColor.systemGreen : NSColor.systemRed
+        let strokeColor = fillColor.shadow(withLevel: 0.35) ?? NSColor.black.withAlphaComponent(0.25)
+
+        let path = NSBezierPath(ovalIn: circleRect)
+        fillColor.setFill()
+        path.fill()
+
+        strokeColor.setStroke()
+        path.lineWidth = 1
+        path.stroke()
     }
 }
