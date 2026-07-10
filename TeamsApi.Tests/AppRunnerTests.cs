@@ -8,6 +8,37 @@ namespace TeamsApi.Tests;
 public class AppRunnerTests
 {
     [Fact]
+    public void AudioHijackCommandSettings_FromEnvironment_UsesProcessOverrides()
+    {
+        const string enableKey = "audiohijackenabletranscribescript";
+        const string disableKey = "audiohijackdisabletranscribescript";
+        const string bundleKey = "audiohijackbundleid";
+
+        var originalEnable = Environment.GetEnvironmentVariable(enableKey);
+        var originalDisable = Environment.GetEnvironmentVariable(disableKey);
+        var originalBundle = Environment.GetEnvironmentVariable(bundleKey);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(enableKey, "Custom/Enable.ahcommand");
+            Environment.SetEnvironmentVariable(disableKey, "Custom/Disable.ahcommand");
+            Environment.SetEnvironmentVariable(bundleKey, "com.example.custom");
+
+            var settings = AudioHijackCommandSettings.FromEnvironment();
+
+            Assert.Equal("com.example.custom", settings.BundleIdentifier);
+            Assert.Equal("Custom/Enable.ahcommand", settings.EnableTranscribeScriptPath);
+            Assert.Equal("Custom/Disable.ahcommand", settings.DisableTranscribeScriptPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(enableKey, originalEnable);
+            Environment.SetEnvironmentVariable(disableKey, originalDisable);
+            Environment.SetEnvironmentVariable(bundleKey, originalBundle);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_ExecutesConfiguredCommands_ForMeetingStartAndStop()
     {
         var meetingState = new BehaviorSubject<bool>(false);

@@ -7,17 +7,23 @@ public sealed record AudioHijackCommandSettings(
 {
     public static AudioHijackCommandSettings FromEnvironment()
     {
-        var bundleIdentifier = Environment.GetEnvironmentVariable("audiohijackbundleid", EnvironmentVariableTarget.User)
+        var bundleIdentifier = ReadEnvironmentVariable("audiohijackbundleid")
             ?? "com.rogueamoeba.audiohijack";
-        var enableTranscribeScriptPath = Environment.GetEnvironmentVariable("audiohijackenabletranscribescript", EnvironmentVariableTarget.User)
+        var enableTranscribeScriptPath = ReadEnvironmentVariable("audiohijackenabletranscribescript")
             ?? "AudioHijackCommands/EnableTranscribe.ahcommand";
-        var disableTranscribeScriptPath = Environment.GetEnvironmentVariable("audiohijackdisabletranscribescript", EnvironmentVariableTarget.User)
+        var disableTranscribeScriptPath = ReadEnvironmentVariable("audiohijackdisabletranscribescript")
             ?? "AudioHijackCommands/DisableTranscribe.ahcommand";
 
         return new AudioHijackCommandSettings(
             BundleIdentifier: bundleIdentifier,
             EnableTranscribeScriptPath: enableTranscribeScriptPath,
             DisableTranscribeScriptPath: disableTranscribeScriptPath);
+    }
+
+    private static string? ReadEnvironmentVariable(string name)
+    {
+        return Environment.GetEnvironmentVariable(name)
+            ?? Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User);
     }
 
     public string? GetScriptPath(bool isInMeeting)

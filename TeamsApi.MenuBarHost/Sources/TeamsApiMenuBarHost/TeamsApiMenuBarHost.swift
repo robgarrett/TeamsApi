@@ -95,6 +95,7 @@ private final class HostProcessLauncher {
     private var process: Process?
     private var outputPipe: Pipe?
     private var outputParser: OutputParser?
+    private let audioHijackCommands = AudioHijackCommandConfig.load()
     var onMeetingStateChanged: ((Bool) -> Void)?
 
     func start() {
@@ -115,6 +116,7 @@ private final class HostProcessLauncher {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["dotnet", hostDll.path]
         process.currentDirectoryURL = hostDll.deletingLastPathComponent()
+        process.environment = makeEnvironment()
         process.standardOutput = outputPipe
         process.standardError = outputPipe
 
@@ -152,6 +154,45 @@ private final class HostProcessLauncher {
 
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         process?.terminate()
+    }
+
+    private func makeEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+
+        if let enableScriptPath = audioHijackCommands?.enableTranscribeScriptPath,
+           !enableScriptPath.isEmpty {
+            environment["audiohijackenabletranscribescript"] = enableScriptPath
+        } else {
+            environment.removeValue(forKey: "audiohijackenabletranscribescript")
+        }
+
+        if let disableScriptPath = audioHijackCommands?.disableTranscribeScriptPath,
+           !disableScriptPath.isEmpty {
+            environment["audiohijackdisabletranscribescript"] = disableScriptPath
+        } else {
+            environment.removeValue(forKey: "audiohijackdisabletranscribescript")
+        }
+
+        return environment
+    }
+}
+
+private struct AudioHijackCommandConfig: Decodable {
+    let enableTranscribeScriptPath: String?
+    let disableTranscribeScriptPath: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case enableTranscribeScriptPath = "EnableTranscribeScriptPath"
+        case disableTranscribeScriptPath = "DisableTranscribeScriptPath"
+    }
+
+    static func load() -> AudioHijackCommandConfig? {
+        guard let url = Bundle.module.url(forResource: "AudioHijackCommands", withExtension: "plist"),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+
+        return try? PropertyListDecoder().decode(AudioHijackCommandConfig.self, from: data)
     }
 }
 

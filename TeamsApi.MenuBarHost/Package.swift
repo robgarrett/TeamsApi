@@ -10,7 +10,10 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "TeamsApiMenuBarHost"
+            name: "TeamsApiMenuBarHost",
+            resources: [
+                .process("Resources")
+            ]
         ),
         .testTarget(
             name: "TeamsApiMenuBarHostTests",
