@@ -47,35 +47,63 @@ public sealed class AppRunner : IAppRunner, IAppEventPublisher
     public async Task<int> RunAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("App runner starting.");
-
-        using var teamsClient = _teamsClientFactory.Create(_teamsConnectionSettings, cancellationToken);
-        using var teamsBootstrapSubscription = teamsClient.CanToggleMuteChanged
-            .Skip(1)
-            .Select(canToggleMute => Observable.FromAsync(ct => TryBootstrapTeamsApiAsync(teamsClient, canToggleMute, ct)))
-            .Concat()
-            .Subscribe();
-        using var teamsMeetingSubscription = teamsClient.IsInMeetingChanged
-            .Skip(1)
-            .Select(isInMeeting => Observable.FromAsync(ct => HandleMeetingStateChangedAsync(isInMeeting, ct)))
-            .Concat()
-            .Subscribe();
+        var retryDelay = TimeSpan.FromSeconds(2);
 
         try
         {
-            _logger.LogInformation(
-                "Connecting to Teams at {Host}:{Port}.",
-                _teamsConnectionSettings.Host,
-                _teamsConnectionSettings.Port);
-
-            await teamsClient.Connect(cancellationToken).ConfigureAwait(false);
-            _logger.LogInformation("Connected to Teams.");
-
-            while (await _eventChannel.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+            while (!cancellationToken.IsCancellationRequested)
             {
-                while (_eventChannel.Reader.TryRead(out var appEvent))
+                using var teamsClient = _teamsClientFactory.Create(_teamsConnectionSettings, cancellationToken);
+                using var teamsBootstrapSubscription = teamsClient.CanToggleMuteChanged
+                    .Skip(1)
+                    .Select(canToggleMute => Observable.FromAsync(ct => TryBootstrapTeamsApiAsync(teamsClient, canToggleMute, ct)))
+                    .Concat()
+                    .Subscribe();
+                using var teamsMeetingSubscription = teamsClient.IsInMeetingChanged
+                    .Skip(1)
+                    .Select(isInMeeting => Observable.FromAsync(ct => HandleMeetingStateChangedAsync(isInMeeting, ct)))
+                    .Concat()
+                    .Subscribe();
+
+                try
                 {
-                    HandleEvent(appEvent);
+                    _logger.LogInformation(
+                        "Connecting to Teams at {Host}:{Port}.",
+                        _teamsConnectionSettings.Host,
+                        _teamsConnectionSettings.Port);
+
+                    await teamsClient.Connect(cancellationToken).ConfigureAwait(false);
+                    _logger.LogInformation("Connected to Teams.");
+                    retryDelay = TimeSpan.FromSeconds(2);
+
+                    while (await _eventChannel.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        while (_eventChannel.Reader.TryRead(out var appEvent))
+                        {
+                            HandleEvent(appEvent);
+                        }
+                    }
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogInformation("App runner stopping.");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Teams connection failed. Retrying in {Delay} seconds.",
+                        retryDelay.TotalSeconds);
+                }
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+                retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, 30));
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

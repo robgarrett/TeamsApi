@@ -16,13 +16,42 @@ enum TeamsApiMenuBarHostMain {
 final class TeamsApiMenuBarHostApp: NSObject, NSApplicationDelegate {
     private let launcher = HostProcessLauncher()
     private var statusItem: NSStatusItem?
+    private var statusMenuItem: NSMenuItem?
+    private let settingsWindowController = SettingsWindowController()
+    private var hostStatusText = "Stopped"
+    private var meetingStatusText = "Out of meeting"
 
     override init() {
         super.init()
+        launcher.onStatusChanged = { [weak self] statusText in
+            DispatchQueue.main.async {
+                self?.hostStatusText = statusText
+                self?.refreshStatusText()
+            }
+        }
         launcher.onMeetingStateChanged = { [weak self] isInMeeting in
             DispatchQueue.main.async {
+                self?.meetingStatusText = isInMeeting ? "In meeting" : "Out of meeting"
                 self?.updateStatusItem(isInMeeting: isInMeeting)
+                self?.refreshStatusText()
             }
+        }
+
+        settingsWindowController.onSave = { [weak self] settings in
+            CommandScriptSettingsStore.shared.save(
+                enableTranscribeScriptPath: settings.enableTranscribeScriptPath,
+                disableTranscribeScriptPath: settings.disableTranscribeScriptPath
+            )
+            self?.settingsWindowController.apply(settings: CommandScriptSettings.current())
+            self?.launcher.restart()
+            self?.refreshStatusText()
+        }
+
+        settingsWindowController.onResetToDefaults = { [weak self] in
+            CommandScriptSettingsStore.shared.clearOverrides()
+            self?.settingsWindowController.apply(settings: CommandScriptSettings.current())
+            self?.launcher.restart()
+            self?.refreshStatusText()
         }
     }
 
@@ -30,6 +59,7 @@ final class TeamsApiMenuBarHostApp: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         NSLog("TeamsApi menu bar host launched.")
         configureStatusItem()
+        refreshStatusText()
         updateStatusItem(isInMeeting: false)
         launcher.start()
     }
@@ -41,9 +71,27 @@ final class TeamsApiMenuBarHostApp: NSObject, NSApplicationDelegate {
     private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
+        let statusMenuItem = NSMenuItem(title: "Status: Starting…", action: nil, keyEquivalent: "")
+        statusMenuItem.isEnabled = false
+        self.statusMenuItem = statusMenuItem
+        menu.addItem(statusMenuItem)
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
         item.menu = menu
         statusItem = item
+    }
+
+    private func refreshStatusText() {
+        statusMenuItem?.title = "Status: \(hostStatusText) | Meeting: \(meetingStatusText)"
+        settingsWindowController.updateStatus(hostStatus: hostStatusText, meetingStatus: meetingStatusText)
     }
 
     private func updateStatusItem(isInMeeting: Bool) {
@@ -53,6 +101,12 @@ final class TeamsApiMenuBarHostApp: NSObject, NSApplicationDelegate {
 
         button.image = makeStatusImage(isInMeeting: isInMeeting)
         button.imagePosition = .imageOnly
+    }
+
+    @objc private func openSettings() {
+        settingsWindowController.apply(settings: CommandScriptSettings.current())
+        settingsWindowController.updateStatus(hostStatus: hostStatusText, meetingStatus: meetingStatusText)
+        settingsWindowController.showAndActivate()
     }
 
     private func makeStatusImage(isInMeeting: Bool) -> NSImage {
@@ -90,24 +144,36 @@ final class TeamsApiMenuBarHostApp: NSObject, NSApplicationDelegate {
     }
 }
 
-private final class HostProcessLauncher {
+private final class HostProcessLauncher: @unchecked Sendable {
     private let processLock = NSLock()
     private var process: Process?
     private var outputPipe: Pipe?
     private var outputParser: OutputParser?
-    private let audioHijackCommands = AudioHijackCommandConfig.load()
+    private var restartWorkItem: DispatchWorkItem?
+    private var retryDelay: TimeInterval = 2
+    private var shouldAutoRestart = true
+    private var isStopping = false
+    var onStatusChanged: ((String) -> Void)?
     var onMeetingStateChanged: ((Bool) -> Void)?
 
     func start() {
         processLock.lock()
-        defer { processLock.unlock() }
-
         guard process == nil else {
+            processLock.unlock()
             return
         }
 
+        shouldAutoRestart = true
+        isStopping = false
+        restartWorkItem?.cancel()
+        restartWorkItem = nil
+        processLock.unlock()
+
+        notifyStatus("Starting")
+
         guard let launchTarget = HostLocator.resolveLaunchTarget() else {
-            NSLog("TeamsApi host could not be found.")
+            notifyStatus("Host not found")
+            scheduleRestartIfNeeded(reason: "TeamsApi host could not be found.")
             return
         }
 
@@ -121,30 +187,54 @@ private final class HostProcessLauncher {
         process.standardError = outputPipe
 
         let outputParser = OutputParser(onMeetingStateChanged: onMeetingStateChanged)
-        self.outputParser = outputParser
+        process.terminationHandler = { [weak self] process in
+            self?.handleTermination(process)
+        }
 
-        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+        outputPipe.fileHandleForReading.readabilityHandler = { [weak outputParser] handle in
             let data = handle.availableData
             guard !data.isEmpty else {
                 return
             }
 
             FileHandle.standardOutput.write(data)
-            outputParser.ingest(data)
+            outputParser?.ingest(data)
         }
 
         do {
             try process.run()
+            processLock.lock()
             self.process = process
             self.outputPipe = outputPipe
+            self.outputParser = outputParser
+            retryDelay = 2
+            processLock.unlock()
+            notifyStatus("Running")
         } catch {
             outputPipe.fileHandleForReading.readabilityHandler = nil
-            NSLog("Failed to start TeamsApi host: \(error.localizedDescription)")
+            notifyStatus("Host launch failed")
+            scheduleRestartIfNeeded(reason: "Failed to start TeamsApi host: \(error.localizedDescription)")
+        }
+    }
+
+    func restart() {
+        stop()
+
+        processLock.lock()
+        shouldAutoRestart = true
+        processLock.unlock()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.start()
         }
     }
 
     func stop() {
         processLock.lock()
+        isStopping = true
+        shouldAutoRestart = false
+        restartWorkItem?.cancel()
+        restartWorkItem = nil
         let process = process
         let outputPipe = outputPipe
         self.process = nil
@@ -154,45 +244,61 @@ private final class HostProcessLauncher {
 
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         process?.terminate()
+        notifyStatus("Stopped")
     }
 
     private func makeEnvironment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
+        let commandSettings = CommandScriptSettings.current()
 
-        if let enableScriptPath = audioHijackCommands?.enableTranscribeScriptPath,
-           !enableScriptPath.isEmpty {
-            environment["audiohijackenabletranscribescript"] = enableScriptPath
-        } else {
-            environment.removeValue(forKey: "audiohijackenabletranscribescript")
-        }
-
-        if let disableScriptPath = audioHijackCommands?.disableTranscribeScriptPath,
-           !disableScriptPath.isEmpty {
-            environment["audiohijackdisabletranscribescript"] = disableScriptPath
-        } else {
-            environment.removeValue(forKey: "audiohijackdisabletranscribescript")
-        }
+        environment["audiohijackbundleid"] = commandSettings.bundleIdentifier
+        environment["audiohijackenabletranscribescript"] = commandSettings.enableTranscribeScriptPath
+        environment["audiohijackdisabletranscribescript"] = commandSettings.disableTranscribeScriptPath
 
         return environment
     }
-}
+    
+    private func handleTermination(_ process: Process) {
+        processLock.lock()
+        let shouldRestart = shouldAutoRestart && !isStopping
+        self.process = nil
+        self.outputPipe = nil
+        self.outputParser = nil
+        processLock.unlock()
 
-private struct AudioHijackCommandConfig: Decodable {
-    let enableTranscribeScriptPath: String?
-    let disableTranscribeScriptPath: String?
-
-    private enum CodingKeys: String, CodingKey {
-        case enableTranscribeScriptPath = "EnableTranscribeScriptPath"
-        case disableTranscribeScriptPath = "DisableTranscribeScriptPath"
+        if shouldRestart {
+            scheduleRestartIfNeeded(reason: "TeamsApi host exited unexpectedly.")
+        } else {
+            notifyStatus("Stopped")
+        }
     }
 
-    static func load() -> AudioHijackCommandConfig? {
-        guard let url = Bundle.module.url(forResource: "AudioHijackCommands", withExtension: "plist"),
-              let data = try? Data(contentsOf: url) else {
-            return nil
-        }
+    private func scheduleRestartIfNeeded(reason: String) {
+        processLock.lock()
+        let shouldRestart = shouldAutoRestart && !isStopping && restartWorkItem == nil
+        let currentDelay = retryDelay
+        if shouldRestart {
+            retryDelay = min(retryDelay * 2, 30)
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.processLock.lock()
+                self?.restartWorkItem = nil
+                self?.processLock.unlock()
+                self?.start()
+            }
+            restartWorkItem = workItem
+            processLock.unlock()
 
-        return try? PropertyListDecoder().decode(AudioHijackCommandConfig.self, from: data)
+            notifyStatus("Retrying in \(Int(currentDelay))s")
+            NSLog("%@", reason)
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + currentDelay, execute: workItem)
+            return
+        }
+        processLock.unlock()
+        NSLog("%@", reason)
+    }
+
+    private func notifyStatus(_ status: String) {
+        onStatusChanged?(status)
     }
 }
 
