@@ -21,9 +21,9 @@ public sealed record TeamsConnectionSettings(
             Host: host,
             Port: port,
             Token: token,
-            Manufacturer: "TeamsApi",
-            Device: "TeamsApi Mac",
-            App: "TeamsApi Console",
+            Manufacturer: "Rob Garrett",
+            Device: "Mac",
+            App: "Teams Transcribe with Audio Hijack",
             AppVersion: "1.0.0",
             AutoReconnect: true);
     }

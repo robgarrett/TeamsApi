@@ -112,6 +112,7 @@ public sealed class AppRunner : IAppRunner, IAppEventPublisher
         {
             _logger.LogInformation("Bootstrapping Teams API by toggling mute once so Teams registers the plugin.");
             await teamsClient.ToggleMute().ConfigureAwait(false);
+
             _teamsApiActivated = true;
             _logger.LogInformation("Teams API bootstrap command completed.");
         }
@@ -133,6 +134,8 @@ public sealed class AppRunner : IAppRunner, IAppEventPublisher
                 Message: isInMeeting ? "Teams meeting started." : "Teams meeting stopped.",
                 OccurredAt: DateTimeOffset.UtcNow),
             cancellationToken).ConfigureAwait(false);
+
+        Console.WriteLine($"MEETING_STATE:{(isInMeeting ? "in" : "out")}");
 
         var scriptPath = _commandSettings.GetScriptPath(isInMeeting);
         if (scriptPath is null)
