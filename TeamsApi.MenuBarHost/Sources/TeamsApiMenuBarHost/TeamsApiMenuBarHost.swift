@@ -106,16 +106,16 @@ private final class HostProcessLauncher {
             return
         }
 
-        guard let hostDll = HostLocator.resolveHostDll() else {
+        guard let launchTarget = HostLocator.resolveLaunchTarget() else {
             NSLog("TeamsApi host could not be found.")
             return
         }
 
         let process = Process()
         let outputPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["dotnet", hostDll.path]
-        process.currentDirectoryURL = hostDll.deletingLastPathComponent()
+        process.executableURL = launchTarget.executableURL
+        process.arguments = launchTarget.arguments
+        process.currentDirectoryURL = launchTarget.currentDirectoryURL
         process.environment = makeEnvironment()
         process.standardOutput = outputPipe
         process.standardError = outputPipe
@@ -229,11 +229,34 @@ private final class OutputParser: @unchecked Sendable {
     }
 }
 
+private struct HostLaunchTarget {
+    let executableURL: URL
+    let arguments: [String]
+    let currentDirectoryURL: URL?
+}
+
 private enum HostLocator {
-    static func resolveHostDll() -> URL? {
-        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("TeamsApi.Host.dll"),
-           FileManager.default.fileExists(atPath: bundled.path) {
-            return bundled
+    static func resolveLaunchTarget() -> HostLaunchTarget? {
+        if let bundledExecutable = Bundle.module.url(
+            forResource: "TeamsApi.Host",
+            withExtension: nil,
+            subdirectory: "TeamsApiHostRuntime"
+        ),
+           FileManager.default.isExecutableFile(atPath: bundledExecutable.path) {
+            return HostLaunchTarget(
+                executableURL: bundledExecutable,
+                arguments: [],
+                currentDirectoryURL: bundledExecutable.deletingLastPathComponent()
+            )
+        }
+
+        if let bundledDll = Bundle.main.resourceURL?.appendingPathComponent("TeamsApi.Host.dll"),
+           FileManager.default.fileExists(atPath: bundledDll.path) {
+            return HostLaunchTarget(
+                executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: ["dotnet", bundledDll.path],
+                currentDirectoryURL: bundledDll.deletingLastPathComponent()
+            )
         }
 
         let startDirectories = [
@@ -243,15 +266,19 @@ private enum HostLocator {
 
         for startDirectory in startDirectories {
             if let repoRoot = findRepoRoot(startingAt: startDirectory) {
-                let hostDll = repoRoot
+                let hostRuntime = repoRoot
                     .appendingPathComponent("TeamsApi.Host")
                     .appendingPathComponent("bin")
                     .appendingPathComponent("Debug")
                     .appendingPathComponent("net10.0")
                     .appendingPathComponent("TeamsApi.Host.dll")
 
-                if FileManager.default.fileExists(atPath: hostDll.path) {
-                    return hostDll
+                if FileManager.default.fileExists(atPath: hostRuntime.path) {
+                    return HostLaunchTarget(
+                        executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+                        arguments: ["dotnet", hostRuntime.path],
+                        currentDirectoryURL: hostRuntime.deletingLastPathComponent()
+                    )
                 }
             }
         }

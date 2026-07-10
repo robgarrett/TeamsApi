@@ -42,9 +42,15 @@ ScaffoldingReadMe.txt
 .env
 
 # Others
+.DS_Store
 ~$*
 *~
 CodeCoverage/
+
+# Packaged Teams host runtime
+TeamsApi.MenuBarHost/Sources/TeamsApiMenuBarHost/Resources/TeamsApiHostRuntime/*
+!TeamsApi.MenuBarHost/Sources/TeamsApiMenuBarHost/Resources/TeamsApiHostRuntime/.gitkeep
+dist/
 
 # MSBuild Binary and Structured Log
 *.binlog
