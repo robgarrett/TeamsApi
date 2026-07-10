@@ -22,6 +22,29 @@
         "--no-build"
       ],
       "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "swift: Build TeamsApiMenuBarHost",
+      "type": "process",
+      "command": "swift",
+      "args": [
+        "build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/TeamsApi.MenuBarHost"
+      },
+      "group": "build"
+    },
+    {
+      "label": "swift: Run TeamsApiMenuBarHost",
+      "type": "process",
+      "command": "swift",
+      "args": [
+        "run"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/TeamsApi.MenuBarHost"
+      }
     }
   ]
 }

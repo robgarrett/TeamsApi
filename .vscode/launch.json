@@ -26,6 +26,43 @@
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
       "console": "integratedTerminal"
+    },
+    {
+      "type": "lldb-dap",
+      "request": "launch",
+      "name": "Debug TeamsApiMenuBarHost",
+      "program": "${workspaceFolder}/TeamsApi.MenuBarHost/.build/arm64-apple-macosx/debug/TeamsApiMenuBarHost",
+      "cwd": "${workspaceFolder}/TeamsApi.MenuBarHost",
+      "preLaunchTask": "swift: Build TeamsApiMenuBarHost"
+    },
+    {
+      "type": "lldb-dap",
+      "request": "launch",
+      "name": "Run TeamsApiMenuBarHost",
+      "program": "${workspaceFolder}/TeamsApi.MenuBarHost/.build/arm64-apple-macosx/debug/TeamsApiMenuBarHost",
+      "cwd": "${workspaceFolder}/TeamsApi.MenuBarHost",
+      "noDebug": true,
+      "preLaunchTask": "swift: Build TeamsApiMenuBarHost"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:TeamsAPI}/TeamsApi.MenuBarHost",
+      "name": "Debug TeamsApiMenuBarHost (TeamsApi.MenuBarHost)",
+      "target": "TeamsApiMenuBarHost",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug TeamsApiMenuBarHost (TeamsApi.MenuBarHost)"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:TeamsAPI}/TeamsApi.MenuBarHost",
+      "name": "Release TeamsApiMenuBarHost (TeamsApi.MenuBarHost)",
+      "target": "TeamsApiMenuBarHost",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release TeamsApiMenuBarHost (TeamsApi.MenuBarHost)"
     }
   ]
 }
