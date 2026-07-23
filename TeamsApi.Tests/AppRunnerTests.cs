@@ -81,9 +81,43 @@ public class AppRunnerTests
             commandExecutor.Calls.ToArray());
     }
 
+    [Fact]
+    public async Task RunAsync_UsesStoredToken_AndPersistsTokenChanges()
+    {
+        var tokenChanged = new Subject<string>();
+        var fakeClient = new FakeTeamsClient(
+            new BehaviorSubject<bool>(false),
+            new BehaviorSubject<bool>(false),
+            tokenChanged);
+        var factory = new FakeTeamsClientFactory(fakeClient);
+        var tokenStore = new RecordingTokenStore("saved-token");
+        var runner = new AppRunner(
+            NullLogger<AppRunner>.Instance,
+            factory,
+            new TeamsConnectionSettings("127.0.0.1", 8124, "environment-token", "manufacturer", "device", "app", "1.0", true),
+            commandExecutor: new RecordingCommandExecutor(),
+            teamsTokenStore: tokenStore);
+
+        using var cancellationSource = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var runTask = runner.RunAsync(cancellationSource.Token);
+
+        await factory.CreateCalled.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal("saved-token", factory.LastSettings!.Token);
+
+        tokenChanged.OnNext("refreshed-token");
+        await tokenStore.TokenSaved.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal("refreshed-token", tokenStore.SavedToken);
+
+        cancellationSource.Cancel();
+        Assert.Equal(0, await runTask);
+    }
+
     private sealed class FakeTeamsClientFactory : ITeamsClientFactory
     {
         private readonly ITeamsClient _client;
+
+        public TaskCompletionSource CreateCalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TeamsConnectionSettings? LastSettings { get; private set; }
 
         public FakeTeamsClientFactory(ITeamsClient client)
         {
@@ -92,6 +126,8 @@ public class AppRunnerTests
 
         public ITeamsClient Create(TeamsConnectionSettings settings, CancellationToken cancellationToken)
         {
+            LastSettings = settings;
+            CreateCalled.TrySetResult();
             return _client;
         }
     }
@@ -100,11 +136,16 @@ public class AppRunnerTests
     {
         private readonly IObservable<bool> _isInMeetingChanged;
         private readonly IObservable<bool> _canToggleMuteChanged;
+        private readonly IObservable<string> _tokenChanged;
 
-        public FakeTeamsClient(IObservable<bool> isInMeetingChanged, IObservable<bool> canToggleMuteChanged)
+        public FakeTeamsClient(
+            IObservable<bool> isInMeetingChanged,
+            IObservable<bool> canToggleMuteChanged,
+            IObservable<string>? tokenChanged = null)
         {
             _isInMeetingChanged = isInMeetingChanged;
             _canToggleMuteChanged = canToggleMuteChanged;
+            _tokenChanged = tokenChanged ?? new Subject<string>();
         }
 
         public bool ConnectCalled { get; private set; }
@@ -113,6 +154,7 @@ public class AppRunnerTests
 
         public IObservable<bool> IsInMeetingChanged => _isInMeetingChanged;
         public IObservable<bool> CanToggleMuteChanged => _canToggleMuteChanged;
+        public IObservable<string> TokenChanged => _tokenChanged;
         public bool CanToggleMute => true;
 
         public Task Connect(CancellationToken cancellationToken = default)
@@ -130,6 +172,31 @@ public class AppRunnerTests
 
         public void Dispose()
         {
+        }
+    }
+
+    private sealed class RecordingTokenStore : ITeamsTokenStore
+    {
+        private readonly string? _storedToken;
+
+        public RecordingTokenStore(string? storedToken)
+        {
+            _storedToken = storedToken;
+        }
+
+        public string? SavedToken { get; private set; }
+        public TaskCompletionSource TokenSaved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<string?> GetTokenAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(_storedToken);
+        }
+
+        public Task SaveTokenAsync(string token, CancellationToken cancellationToken = default)
+        {
+            SavedToken = token;
+            TokenSaved.TrySetResult();
+            return Task.CompletedTask;
         }
     }
 

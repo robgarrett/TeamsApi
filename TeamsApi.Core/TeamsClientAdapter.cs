@@ -13,6 +13,7 @@ internal sealed class TeamsClientAdapter : ITeamsClient
 
     public IObservable<bool> IsInMeetingChanged => _teamsClient.IsInMeetingChanged;
     public IObservable<bool> CanToggleMuteChanged => _teamsClient.CanToggleMuteChanged;
+    public IObservable<string> TokenChanged => _teamsClient.TokenChanged;
 
     public bool CanToggleMute => _teamsClient.CanToggleMute;
 

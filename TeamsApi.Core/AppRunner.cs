@@ -23,6 +23,7 @@ public sealed class AppRunner : IAppRunner, IAppEventPublisher
     private readonly TeamsConnectionSettings _teamsConnectionSettings;
     private readonly AudioHijackCommandSettings _commandSettings;
     private readonly IAppCommandExecutor _commandExecutor;
+    private readonly ITeamsTokenStore _teamsTokenStore;
     private readonly Channel<AppEvent> _eventChannel = Channel.CreateUnbounded<AppEvent>(
         new UnboundedChannelOptions
         {
@@ -35,25 +36,36 @@ public sealed class AppRunner : IAppRunner, IAppEventPublisher
         ITeamsClientFactory? teamsClientFactory = null,
         TeamsConnectionSettings? teamsConnectionSettings = null,
         AudioHijackCommandSettings? commandSettings = null,
-        IAppCommandExecutor? commandExecutor = null)
+        IAppCommandExecutor? commandExecutor = null,
+        ITeamsTokenStore? teamsTokenStore = null)
     {
         _logger = logger;
         _teamsClientFactory = teamsClientFactory ?? new DefaultTeamsClientFactory();
         _teamsConnectionSettings = teamsConnectionSettings ?? TeamsConnectionSettings.FromEnvironment();
         _commandSettings = commandSettings ?? AudioHijackCommandSettings.FromEnvironment();
         _commandExecutor = commandExecutor ?? new MacOpenCommandExecutor();
+        _teamsTokenStore = teamsTokenStore ?? new NullTeamsTokenStore();
     }
 
     public async Task<int> RunAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("App runner starting.");
         var retryDelay = TimeSpan.FromSeconds(2);
+        var teamsConnectionSettings = await LoadTeamsConnectionSettingsAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                using var teamsClient = _teamsClientFactory.Create(_teamsConnectionSettings, cancellationToken);
+                using var teamsClient = _teamsClientFactory.Create(teamsConnectionSettings, cancellationToken);
+                using var teamsTokenSubscription = teamsClient.TokenChanged
+                    .Where(token => !string.IsNullOrWhiteSpace(token))
+                    .DistinctUntilChanged()
+                    .Select(token => Observable.FromAsync(ct => SaveTeamsTokenAsync(token, ct)))
+                    .Concat()
+                    .Subscribe(
+                        onNext: _ => { },
+                        onError: ex => _logger.LogWarning(ex, "Saving the Teams pairing token failed."));
                 using var teamsBootstrapSubscription = teamsClient.CanToggleMuteChanged
                     .Skip(1)
                     .Select(canToggleMute => Observable.FromAsync(ct => TryBootstrapTeamsApiAsync(teamsClient, canToggleMute, ct)))
@@ -152,6 +164,24 @@ public sealed class AppRunner : IAppRunner, IAppEventPublisher
         {
             _logger.LogWarning(ex, "Teams API bootstrap failed.");
         }
+    }
+
+    private async Task<TeamsConnectionSettings> LoadTeamsConnectionSettingsAsync(CancellationToken cancellationToken)
+    {
+        var savedToken = await _teamsTokenStore.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(savedToken))
+        {
+            return _teamsConnectionSettings;
+        }
+
+        _logger.LogInformation("Loaded a saved Teams pairing token.");
+        return _teamsConnectionSettings with { Token = savedToken };
+    }
+
+    private async Task SaveTeamsTokenAsync(string token, CancellationToken cancellationToken)
+    {
+        await _teamsTokenStore.SaveTokenAsync(token, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Saved a refreshed Teams pairing token.");
     }
 
     private async Task HandleMeetingStateChangedAsync(bool isInMeeting, CancellationToken cancellationToken)

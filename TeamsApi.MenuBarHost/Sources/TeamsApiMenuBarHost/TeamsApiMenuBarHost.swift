@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Security
 
 @main
 enum TeamsApiMenuBarHostMain {
@@ -217,7 +218,12 @@ private final class HostProcessLauncher: @unchecked Sendable {
         process.standardOutput = outputPipe
         process.standardError = outputPipe
 
-        let outputParser = OutputParser(onMeetingStateChanged: onMeetingStateChanged)
+        let outputParser = OutputParser(
+            onMeetingStateChanged: onMeetingStateChanged,
+            onTokenChanged: { token in
+                TeamsTokenKeychainStore.shared.save(token)
+            }
+        )
         process.terminationHandler = { [weak self] process in
             self?.handleTermination(process)
         }
@@ -228,8 +234,9 @@ private final class HostProcessLauncher: @unchecked Sendable {
                 return
             }
 
-            FileHandle.standardOutput.write(data)
-            outputParser?.ingest(data)
+            if let safeOutput = outputParser?.ingest(data), !safeOutput.isEmpty {
+                FileHandle.standardOutput.write(safeOutput)
+            }
         }
 
         do {
@@ -285,6 +292,9 @@ private final class HostProcessLauncher: @unchecked Sendable {
         environment["audiohijackbundleid"] = commandSettings.bundleIdentifier
         environment["audiohijackenabletranscribescript"] = commandSettings.enableTranscribeScriptPath
         environment["audiohijackdisabletranscribescript"] = commandSettings.disableTranscribeScriptPath
+        if let teamsToken = TeamsTokenKeychainStore.shared.load() {
+            environment["teamstoken"] = teamsToken
+        }
 
         return environment
     }
@@ -333,36 +343,120 @@ private final class HostProcessLauncher: @unchecked Sendable {
     }
 }
 
-private final class OutputParser: @unchecked Sendable {
+final class OutputParser: @unchecked Sendable {
     private let lock = NSLock()
     private var buffer = ""
     private let onMeetingStateChanged: ((Bool) -> Void)?
+    private let onTokenChanged: ((String) -> Void)?
 
-    init(onMeetingStateChanged: ((Bool) -> Void)?) {
+    init(
+        onMeetingStateChanged: ((Bool) -> Void)?,
+        onTokenChanged: ((String) -> Void)? = nil
+    ) {
         self.onMeetingStateChanged = onMeetingStateChanged
+        self.onTokenChanged = onTokenChanged
     }
 
-    func ingest(_ data: Data) {
+    func ingest(_ data: Data) -> Data {
         lock.lock()
         defer { lock.unlock() }
 
         guard let chunk = String(data: data, encoding: .utf8) else {
-            return
+            return Data()
         }
 
         buffer += chunk
+        var safeLines: [String] = []
 
         while let newlineIndex = buffer.firstIndex(of: "\n") {
             let line = String(buffer[..<newlineIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
             buffer.removeSubrange(...newlineIndex)
 
-            guard line.hasPrefix("MEETING_STATE:") else {
+            if let token = decodeToken(from: line) {
+                onTokenChanged?(token)
                 continue
             }
 
-            let state = line.replacingOccurrences(of: "MEETING_STATE:", with: "")
-            onMeetingStateChanged?(state == "in")
+            if line.hasPrefix("MEETING_STATE:") {
+                let state = line.replacingOccurrences(of: "MEETING_STATE:", with: "")
+                onMeetingStateChanged?(state == "in")
+            }
+
+            safeLines.append(line)
         }
+
+        guard !safeLines.isEmpty else {
+            return Data()
+        }
+
+        return Data((safeLines.joined(separator: "\n") + "\n").utf8)
+    }
+
+    private func decodeToken(from line: String) -> String? {
+        let prefix = "TEAMS_TOKEN:"
+        guard line.hasPrefix(prefix),
+              let tokenData = Data(base64Encoded: String(line.dropFirst(prefix.count))),
+              let token = String(data: tokenData, encoding: .utf8),
+              !token.isEmpty else {
+            return nil
+        }
+
+        return token
+    }
+}
+
+private final class TeamsTokenKeychainStore: @unchecked Sendable {
+    static let shared = TeamsTokenKeychainStore()
+
+    private let service = "com.robgarrett.TeamsApiMenuBarHost"
+    private let account = "teams-pairing-token"
+
+    func load() -> String? {
+        var query = baseQuery
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status != errSecItemNotFound else {
+            return nil
+        }
+        guard status == errSecSuccess,
+              let tokenData = result as? Data,
+              let token = String(data: tokenData, encoding: .utf8) else {
+            NSLog("Unable to load the Teams pairing token from Keychain: %d", status)
+            return nil
+        }
+
+        return token
+    }
+
+    func save(_ token: String) {
+        let attributes = [kSecValueData as String: Data(token.utf8)]
+        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+
+        guard updateStatus == errSecItemNotFound else {
+            NSLog("Unable to update the Teams pairing token in Keychain: %d", updateStatus)
+            return
+        }
+
+        var addQuery = baseQuery
+        addQuery[kSecValueData as String] = Data(token.utf8)
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        if addStatus != errSecSuccess {
+            NSLog("Unable to save the Teams pairing token in Keychain: %d", addStatus)
+        }
+    }
+
+    private var baseQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
     }
 }
 

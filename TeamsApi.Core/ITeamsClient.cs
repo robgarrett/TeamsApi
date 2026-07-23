@@ -4,6 +4,7 @@ public interface ITeamsClient : IDisposable
 {
     IObservable<bool> IsInMeetingChanged { get; }
     IObservable<bool> CanToggleMuteChanged { get; }
+    IObservable<string> TokenChanged { get; }
 
     bool CanToggleMute { get; }
 

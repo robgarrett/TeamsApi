@@ -12,10 +12,10 @@ public sealed record TeamsConnectionSettings(
 {
     public static TeamsConnectionSettings FromEnvironment()
     {
-        var host = Environment.GetEnvironmentVariable("teamsip", EnvironmentVariableTarget.User) ?? "127.0.0.1";
-        var portEnv = int.TryParse(Environment.GetEnvironmentVariable("teamsport", EnvironmentVariableTarget.User), out var parsedPort);
+        var host = GetEnvironmentVariable("teamsip") ?? "127.0.0.1";
+        var portEnv = int.TryParse(GetEnvironmentVariable("teamsport"), out var parsedPort);
         var port = portEnv ? parsedPort : 8124;
-        var token = Environment.GetEnvironmentVariable("teamstoken", EnvironmentVariableTarget.User) ?? string.Empty;
+        var token = GetEnvironmentVariable("teamstoken") ?? string.Empty;
 
         return new TeamsConnectionSettings(
             Host: host,
@@ -26,5 +26,11 @@ public sealed record TeamsConnectionSettings(
             App: "Teams Transcribe with Audio Hijack",
             AppVersion: "1.0.0",
             AutoReconnect: true);
+    }
+
+    private static string? GetEnvironmentVariable(string variable)
+    {
+        return Environment.GetEnvironmentVariable(variable)
+            ?? Environment.GetEnvironmentVariable(variable, EnvironmentVariableTarget.User);
     }
 }

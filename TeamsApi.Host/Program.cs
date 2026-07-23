@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using TeamsApi.Core;
+using TeamsApi.Host;
 
 using var loggerFactory = LoggerFactory.Create(builder =>
 {
@@ -24,5 +25,7 @@ using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx =>
     cancellationSource.Cancel();
 });
 
-var runner = new AppRunner(loggerFactory.CreateLogger<AppRunner>());
+var runner = new AppRunner(
+    loggerFactory.CreateLogger<AppRunner>(),
+    teamsTokenStore: new StandardOutputTeamsTokenStore());
 return await runner.RunAsync(cancellationSource.Token);
